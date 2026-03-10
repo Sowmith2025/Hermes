@@ -641,7 +641,7 @@ export function ChatMessageComponent({ message }: ChatMessageProps) {
                 /* eslint-disable-next-line @next/next/no-img-element */
                 <img
                     src="/images/icon.png"
-                    alt="Neuroflix Director"
+                    alt="Hermes Director"
                     className="h-8 w-8 shrink-0 rounded-full"
                 />
             )}
@@ -650,7 +650,7 @@ export function ChatMessageComponent({ message }: ChatMessageProps) {
             <div className="flex-1 space-y-2 overflow-hidden">
                 {/* Role label */}
                 <p className="text-sm font-medium">
-                    {isUser ? "You" : "Neuroflix Director"}
+                    {isUser ? "You" : "Hermes Director"}
                 </p>
 
                 {/* Attachments (for user messages) */}

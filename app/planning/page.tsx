@@ -461,7 +461,7 @@ export default function PlanningPage() {
                 <div className="flex flex-col items-center gap-4">
                     <Image
                         src="/images/icon.png"
-                        alt="Neuroflix"
+                        alt="Hermes"
                         width={48}
                         height={48}
                         className="rounded-xl"
@@ -490,7 +490,7 @@ export default function PlanningPage() {
                     <div className="flex items-center gap-2">
                         <Image
                             src="/images/icon.png"
-                            alt="Neuroflix"
+                            alt="Hermes"
                             width={28}
                             height={28}
                             className="rounded-lg"

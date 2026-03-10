@@ -3,7 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { uploadBase64Image } from "@/lib/upload";
 import { toBase64 } from "@/lib/image-utils";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY,
+});
+
 
 // ============================================
 // ANGLE CONFIGURATIONS
@@ -187,7 +190,7 @@ ${STYLE_GUIDANCE}`;
 
             try {
                 const response = await ai.models.generateContent({
-                    model: "gemini-3-pro-image-preview",
+                    model: "imagen-3.0-generate-001",
                     contents: [
                         {
                             parts: [

@@ -914,14 +914,14 @@ export function ChatInterface() {
                         <div className="mb-4">
                             <Image
                                 src="/images/icon.png"
-                                alt="Neuroflix"
+                                alt="Hermes"
                                 width={64}
                                 height={64}
                                 className="rounded-2xl"
                             />
                         </div>
                         <h2 className="mb-2 text-xl font-semibold">
-                            Welcome to Neuroflix
+                            Welcome to Hermes
                         </h2>
                         <p className="max-w-md text-muted-foreground">
                             Your AI-powered video director for creating

@@ -11,7 +11,10 @@ import type {
 } from "@/lib/planning-types";
 import { QUESTION_TIME_LIMITS, MODULE_COLORS } from "@/lib/planning-types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY,
+});
+
 
 // ============================================
 // REQUEST TYPE
@@ -346,7 +349,7 @@ export async function POST(request: NextRequest) {
                     // Stream the research response
                     const researchStream =
                         await ai.models.generateContentStream({
-                            model: "gemini-3-flash-preview",
+                    model: "gemini-1.5-flash",
                             contents: [
                                 {
                                     parts: [
@@ -448,7 +451,7 @@ export async function POST(request: NextRequest) {
                     });
 
                     const fallbackResponse = await ai.models.generateContent({
-                        model: "gemini-3-flash-preview",
+                        model: "gemini-1.5-flash",
                         contents: [
                             {
                                 parts: [
@@ -480,7 +483,7 @@ export async function POST(request: NextRequest) {
                 );
 
                 const structureResponse = await ai.models.generateContent({
-                    model: "gemini-3-flash-preview",
+                    model: "gemini-1.5-flash",
                     contents: [{ parts: [{ text: structuringPrompt }] }],
                     config: {
                         responseMimeType: "application/json",

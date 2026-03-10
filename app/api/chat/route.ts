@@ -9,7 +9,10 @@ import type {
     ToolCallResult,
 } from "@/lib/types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY,
+});
+
 
 // ============================================
 // REQUEST/RESPONSE TYPES
@@ -213,10 +216,14 @@ function extractThoughtSummary(candidate: {
 // ============================================
 
 export async function POST(request: NextRequest) {
+    console.log("--- CHAT API REQUEST RECEIVED ---");
     try {
         const body: ChatRequestBody = await request.json();
         const { message, attachments, conversationHistory, projectState } =
             body;
+
+        console.log("Message:", message);
+        console.log("History length:", conversationHistory.length);
 
         // Build user content parts
         const userParts = await buildUserParts(message, attachments);
@@ -240,22 +247,23 @@ export async function POST(request: NextRequest) {
             )}\n\`\`\``;
         }
 
+        console.log("Calling Gemini API...");
         // Call Gemini with function calling
         const response = await ai.models.generateContent({
-            model: "gemini-3-pro-preview",
+            model: "models/gemini-1.5-flash",
             contents: updatedHistory,
             config: {
                 systemInstruction,
                 tools: [{ functionDeclarations: agentTools }],
-                thinkingConfig: {
-                    includeThoughts: true,
-                },
             },
         });
 
+        console.log("Gemini Response received.");
+        
         // Extract response data
         const candidate = response.candidates?.[0];
         if (!candidate?.content?.parts) {
+            console.error("Invalid response structure:", JSON.stringify(response, null, 2));
             throw new Error("No response from model");
         }
 
@@ -295,14 +303,18 @@ export async function POST(request: NextRequest) {
         }
 
         return NextResponse.json(responseBody);
-    } catch (error) {
-        console.error("Chat API error:", error);
+    } catch (error: any) {
+        console.error("Chat API error DETAILS:", error);
+        if (error.response) {
+             console.error("API Error Response:", JSON.stringify(error.response, null, 2));
+        }
         return NextResponse.json(
             {
                 error:
                     error instanceof Error
                         ? error.message
                         : "Failed to process chat",
+                details: error.toString() 
             },
             { status: 500 }
         );

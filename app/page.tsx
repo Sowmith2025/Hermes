@@ -38,7 +38,7 @@ export default function Page() {
                 <div className="flex flex-col items-center gap-4">
                     <Image
                         src="/images/icon.png"
-                        alt="Neuroflix"
+                        alt="Hermes"
                         width={48}
                         height={48}
                         className="rounded-xl"
@@ -58,7 +58,7 @@ export default function Page() {
             <header className="flex h-14 items-center justify-between border-b border-border px-4">
                 <Image
                     src="/images/logo.svg"
-                    alt="Neuroflix"
+                    alt="Hermes"
                     width={140}
                     height={32}
                     className="h-8 w-auto"

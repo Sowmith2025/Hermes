@@ -9,8 +9,12 @@ import { UTApi } from "uploadthing/server";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { fal } from "@fal-ai/client";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY,
+});
+
 const utapi = new UTApi();
 
 type CharacterInScene = {
@@ -151,6 +155,84 @@ SCENE TYPE: ${
     return prompt;
 }
 
+async function generateWithFal(
+    prompt: string,
+    thumbnailUrl: string,
+    aspectRatio: "16:9" | "9:16"
+): Promise<string> {
+    console.log("Starting Fal.ai generation with Wan 2.1...");
+    
+    try {
+        // Use Image-to-Video model (14B parameter version)
+        const result: any = await fal.subscribe("fal-ai/wan-2.1-i2v-14b", {
+            input: {
+                prompt: prompt,
+                image_url: thumbnailUrl,
+                aspect_ratio: aspectRatio,
+            },
+            logs: true,
+            onQueueUpdate: (update) => {
+                if (update.status === "IN_PROGRESS") {
+                    update.logs.map((log) => log.message).forEach(msg => console.log(`[Fal]: ${msg}`));
+                }
+            },
+        });
+
+        if (result.video && result.video.url) {
+            console.log("Fal generation successful:", result.video.url);
+            return result.video.url;
+        }
+        
+        throw new Error("No video URL in Fal response");
+    } catch (error) {
+        console.error("Fal generation failed:", error);
+        throw error;
+    }
+}
+
+async function generateWithHuggingFace(
+    prompt: string,
+    thumbnailUrl: string,
+    aspectRatio: "16:9" | "9:16"
+): Promise<Buffer> {
+    console.log("Starting Hugging Face generation with Wan-AI/Wan2.2-TI2V-5B...");
+    
+    const hfToken = process.env.HF_TOKEN;
+    if (!hfToken) {
+        throw new Error("HF_TOKEN is missing");
+    }
+
+    // Try to get video from the Inference API
+    const response = await fetch(
+        "https://api-inference.huggingface.co/models/Wan-AI/Wan2.2-TI2V-5B",
+        {
+            headers: {
+                Authorization: `Bearer ${hfToken}`,
+                "Content-Type": "application/json",
+                "x-use-cache": "false" 
+            },
+            method: "POST",
+            body: JSON.stringify({
+                inputs: prompt,
+                parameters: {
+                    // Models might interpret parameters differently
+                    aspect_ratio: aspectRatio 
+                } 
+            }),
+        }
+    );
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`HF API Error (${response.status}):`, errorText);
+        throw new Error(`Hugging Face API failed: ${response.status} ${errorText}`);
+    }
+
+    // The response is expected to be the video bytes
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+}
+
 export async function POST(request: NextRequest) {
     try {
         const body: GenerateVideoRequest = await request.json();
@@ -172,12 +254,7 @@ export async function POST(request: NextRequest) {
         const isPortrait = aspectRatio === "9:16";
 
         console.log(`=== GENERATING VIDEO FOR SCENE ${sceneIndex + 1} ===`);
-        console.log(
-            `Aspect ratio: ${aspectRatio} (${
-                isPortrait ? "portrait" : "landscape"
-            })`
-        );
-        console.log(`Characters in scene: ${charactersInScene.length}`);
+        console.log(`Aspect ratio: ${aspectRatio}`);
 
         // Build the prompt
         const prompt = buildVideoPrompt(
@@ -191,172 +268,172 @@ export async function POST(request: NextRequest) {
             charactersInScene
         );
 
-        console.log(`Prompt length: ${prompt.length} characters`);
-
-        // Fetch thumbnail as buffer
-        const thumbnailBuffer = await fetchImageAsBuffer(thumbnailUrl);
-        const thumbnailBase64 = thumbnailBuffer.toString("base64");
-
-        let operation;
-
-        if (isPortrait) {
-            // PORTRAIT MODE: Use image-to-video (no reference images allowed per docs)
-            // Reference images only support 16:9 aspect ratio
-            console.log("Using image-to-video mode (portrait)");
-
-            operation = await ai.models.generateVideos({
-                model: "veo-3.1-generate-preview",
-                prompt: prompt,
-                image: {
-                    imageBytes: thumbnailBase64,
-                    mimeType: "image/png",
-                },
-                config: {
-                    aspectRatio: "9:16",
-                    personGeneration: "allow_adult",
-                },
-            });
-        } else {
-            // LANDSCAPE MODE: Use reference images (up to 3)
-            // Per docs: referenceImages only supports 16:9 and requires 8s duration
-            console.log("Using reference images mode (landscape)");
-
-            // Prepare reference images - match the API structure from docs
-            const referenceImages: VideoGenerationReferenceImage[] = [];
-
-            // Add thumbnail as first reference
-            referenceImages.push({
-                image: {
-                    imageBytes: thumbnailBase64,
-                    mimeType: "image/png",
-                },
-                referenceType: VideoGenerationReferenceType.ASSET,
-            });
-
-            // Add character grids (up to 2 characters to stay within 3 reference images limit)
-            for (let i = 0; i < Math.min(2, charactersInScene.length); i++) {
-                const char = charactersInScene[i];
-                if (char.attireAngles && char.attireAngles.length >= 4) {
-                    try {
-                        console.log(
-                            `Creating character grid for ${char.name}...`
-                        );
-                        const gridBuffer = await createCharacterGrid(
-                            char.attireAngles
-                        );
-                        const gridBase64 = gridBuffer.toString("base64");
-                        referenceImages.push({
-                            image: {
-                                imageBytes: gridBase64,
-                                mimeType: "image/png",
-                            },
-                            referenceType: VideoGenerationReferenceType.ASSET,
-                        });
-                        console.log(`✓ Added character grid for ${char.name}`);
-                    } catch (e) {
-                        console.warn(
-                            `Failed to create grid for ${char.name}:`,
-                            e
-                        );
-                    }
-                }
-            }
-
-            console.log(`Total reference images: ${referenceImages.length}`);
-
-            operation = await ai.models.generateVideos({
-                model: "veo-3.1-generate-preview",
-                prompt: prompt,
-                config: {
-                    aspectRatio: "16:9",
-                    // Per docs: Must be 8 seconds when using referenceImages (only supports 16:9)
-                    durationSeconds: 8,
-                    personGeneration: "allow_adult",
-                    referenceImages: referenceImages,
-                },
-            });
-        }
-
-        // Poll for completion - per docs, videos can take up to 6 minutes
-        console.log("Video generation started, polling for completion...");
-        let pollCount = 0;
-        const maxPolls = 60; // 10 minutes max (10 seconds per poll)
-
-        while (!operation.done && pollCount < maxPolls) {
-            pollCount++;
-            console.log(`Poll ${pollCount}/${maxPolls}...`);
-            await new Promise((resolve) => setTimeout(resolve, 10000)); // Wait 10 seconds
-            operation = await ai.operations.getVideosOperation({
-                operation: operation,
-            });
-        }
-
-        if (!operation.done) {
-            throw new Error("Video generation timed out");
-        }
-
-        // Get the video file from response
-        const generatedVideo = operation.response?.generatedVideos?.[0];
-        if (!generatedVideo?.video) {
-            throw new Error("No video generated");
-        }
-
-        console.log("Video generation complete!");
-
-        // Get the video file object
-        const videoFile = generatedVideo.video;
-
-        // Download the video to a temp file, then upload to UploadThing for persistent storage
         let videoUrl: string;
 
-        try {
-            // Create temp file path
-            const tempDir = os.tmpdir();
-            const tempFilePath = path.join(
-                tempDir,
-                `scene-${sceneIndex + 1}-${Date.now()}.mp4`
-            );
+        // 1. Try Hugging Face (User requested prioritization)
+        if (process.env.HF_TOKEN) {
+             console.log("HF_TOKEN found. Using Wan 2.2 Model (via Hugging Face).");
+             try {
+                const videoBuffer = await generateWithHuggingFace(prompt, thumbnailUrl, aspectRatio);
+                
+                // Upload to UploadThing
+                const blob = new Blob([new Uint8Array(videoBuffer)], { type: "video/mp4" });
+                const file = new File([blob], `scene-${sceneIndex + 1}-wan-hf.mp4`, { type: "video/mp4" });
+                
+                const uploadResponse = await utapi.uploadFiles([file]);
+                
+                if (uploadResponse[0]?.data?.url) {
+                    videoUrl = uploadResponse[0].data.url;
+                    console.log(`Video uploaded to UploadThing: ${videoUrl}`);
+                } else {
+                    throw new Error("Failed to upload generated video to UploadThing");
+                }
+             } catch (hfError) {
+                 console.error("Hugging Face generation failed:", hfError);
+                 throw hfError;
+             }
+        } 
+        // 2. Try Fal.ai
+        else if (process.env.FAL_KEY) {
+            console.log("FAL_KEY found. Using Wan 2.1 Model (via Fal.ai).");
+            const falVideoUrl = await generateWithFal(prompt, thumbnailUrl, aspectRatio);
+            
+            // Fetch and upload
+            const videoBuffer = await fetchImageAsBuffer(falVideoUrl);
+            const blob = new Blob([new Uint8Array(videoBuffer)], { type: "video/mp4" });
+            const file = new File([blob], `scene-${sceneIndex + 1}-wan.mp4`, { type: "video/mp4" });
+            
+            const uploadResponse = await utapi.uploadFiles([file]);
+            
+            if (uploadResponse[0]?.data?.url) {
+                videoUrl = uploadResponse[0].data.url;
+                console.log(`Video uploaded to UploadThing: ${videoUrl}`);
+            } else {
+                console.warn("UploadThing upload failed, using Fal URL directly.");
+                videoUrl = falVideoUrl;
+            }
 
-            // Download video using the SDK
+        } 
+        // 3. Default to Google Veo
+        else {
+            console.log("No 3rd party keys found. Defaulting to Google Veo.");
+            
+            // Fetch thumbnail as buffer
+            const thumbnailBuffer = await fetchImageAsBuffer(thumbnailUrl);
+            const thumbnailBase64 = thumbnailBuffer.toString("base64");
+    
+            let operation;
+    
+            if (isPortrait) {
+                // PORTRAIT MODE: Use image-to-video (no reference images allowed per docs)
+                console.log("Using image-to-video mode (portrait)");
+    
+                operation = await ai.models.generateVideos({
+                    model: "veo-3.1-generate-preview",
+                    prompt: prompt,
+                    image: {
+                        imageBytes: thumbnailBase64,
+                        mimeType: "image/png",
+                    },
+                    config: {
+                        aspectRatio: "9:16",
+                        personGeneration: "allow_adult",
+                    },
+                });
+            } else {
+                // LANDSCAPE MODE: Use reference images (up to 3)
+                console.log("Using reference images mode (landscape)");
+    
+                const referenceImages: VideoGenerationReferenceImage[] = [];
+    
+                // Add thumbnail as first reference
+                referenceImages.push({
+                    image: {
+                        imageBytes: thumbnailBase64,
+                        mimeType: "image/png",
+                    },
+                    referenceType: VideoGenerationReferenceType.ASSET,
+                });
+    
+                // Add character grids
+                for (let i = 0; i < Math.min(2, charactersInScene.length); i++) {
+                    const char = charactersInScene[i];
+                    if (char.attireAngles && char.attireAngles.length >= 4) {
+                        try {
+                            const gridBuffer = await createCharacterGrid(char.attireAngles);
+                            const gridBase64 = gridBuffer.toString("base64");
+                            referenceImages.push({
+                                image: {
+                                    imageBytes: gridBase64,
+                                    mimeType: "image/png",
+                                },
+                                referenceType: VideoGenerationReferenceType.ASSET,
+                            });
+                        } catch (e) {
+                            console.warn(`Failed to create grid for ${char.name}:`, e);
+                        }
+                    }
+                }
+    
+                operation = await ai.models.generateVideos({
+                    model: "veo-3.1-generate-preview",
+                    prompt: prompt,
+                    config: {
+                        aspectRatio: "16:9",
+                        durationSeconds: 8,
+                        personGeneration: "allow_adult",
+                        referenceImages: referenceImages,
+                    },
+                });
+            }
+    
+            // Poll for completion
+            console.log("Veo video generation started, polling for completion...");
+            let pollCount = 0;
+            const maxPolls = 60;
+    
+            while (!operation.done && pollCount < maxPolls) {
+                pollCount++;
+                console.log(`Poll ${pollCount}/${maxPolls}...`);
+                await new Promise((resolve) => setTimeout(resolve, 10000));
+                operation = await ai.operations.getVideosOperation({
+                    operation: operation,
+                });
+            }
+    
+            if (!operation.done) {
+                throw new Error("Video generation timed out");
+            }
+    
+            const generatedVideo = operation.response?.generatedVideos?.[0];
+            if (!generatedVideo?.video) {
+                throw new Error("No video generated");
+            }
+    
+            const videoFile = generatedVideo.video;
+            
+            // Download and Upload for Veo Result
+            const tempDir = os.tmpdir();
+            const tempFilePath = path.join(tempDir, `scene-${sceneIndex + 1}-${Date.now()}.mp4`);
+            
             await ai.files.download({
                 file: videoFile,
                 downloadPath: tempFilePath,
             });
-
-            console.log(`Video downloaded to ${tempFilePath}`);
-
-            // Read the file and upload to UploadThing
+            
             const videoBuffer = fs.readFileSync(tempFilePath);
-            const blob = new Blob([videoBuffer], { type: "video/mp4" });
-            const file = new File([blob], `scene-${sceneIndex + 1}-video.mp4`, {
-                type: "video/mp4",
-            });
-
+            const blob = new Blob([new Uint8Array(videoBuffer)], { type: "video/mp4" });
+            const file = new File([blob], `scene-${sceneIndex + 1}-video.mp4`, { type: "video/mp4" });
+            
             const uploadResponse = await utapi.uploadFiles([file]);
-
-            if (
-                uploadResponse[0]?.data?.ufsUrl ||
-                uploadResponse[0]?.data?.url
-            ) {
-                videoUrl =
-                    uploadResponse[0].data.ufsUrl ||
-                    uploadResponse[0].data.url ||
-                    "";
-                console.log(`Video uploaded to UploadThing: ${videoUrl}`);
+            
+            if (uploadResponse[0]?.data?.url) {
+                videoUrl = uploadResponse[0].data.url;
             } else {
                 throw new Error("Failed to upload video to UploadThing");
             }
-
-            // Clean up temp file
+            
             fs.unlinkSync(tempFilePath);
-        } catch (downloadError) {
-            console.warn(
-                "Failed to download/upload video, using temporary URI:",
-                downloadError
-            );
-            // Fallback to the temporary URI (valid for ~2 days per docs)
-            videoUrl = videoFile.uri || "";
-            console.log(`Using temporary video URI: ${videoUrl}`);
         }
 
         console.log(`Final video URL: ${videoUrl}`);

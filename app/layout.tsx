@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-    title: "Neuroflix | AI Video Director",
+    title: "Hermes | AI Video Director",
     description:
         "Your agentic AI video director for creating compliant, professional video content. Co-create scripts, characters, and visual assets with intelligent guidance.",
 };
